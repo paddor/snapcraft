@@ -28,7 +28,7 @@ from testtools.matchers import Contains, Equals, FileExists, Is, IsInstance, Not
 import tests
 from snapcraft import storeapi
 from snapcraft.storeapi import errors, http_clients
-from snapcraft.storeapi.v2 import channel_map, releases, whoami
+from snapcraft.storeapi.v2 import channel_map, releases, whoami, validation_sets
 from tests import fixture_setup, unit
 
 
@@ -661,6 +661,105 @@ class RegisterTestCase(StoreTestCase):
             "snap-name-no-clear-error",
         )
         self.assertThat(str(raised), Equals("Registration failed."))
+
+
+class ValidationSetsTestCase(StoreTestCase):
+    def setUp(self):
+        super().setUp()
+        self.client.login(email="dummy", password="test correct password")
+
+        self.validation_sets_build = {
+            "name": "acme-cert-2020-10",
+            "account-id": "AccountIDXXXOfTheRequestingUserX",
+            "sequence": 3,
+            "snaps": [
+                {"name": "snap-name-1", "presence": "optional"},
+                {"name": "snap-name-2"},
+                {
+                    "name": "snap-name-3",
+                    "id": "XXSnapIDForXSnapName3XXXXXXXXXXX",
+                    "presence": "required",
+                    "revision": 2,
+                },
+                {"name": "snap-name-4", "revision": 123},
+                {"name": "snap-name-5", "presence": "invalid"},
+            ],
+        }
+
+    def test_post_valid_build_assertion(self):
+        build_assertion = self.client.post_validation_sets_build_assertion(
+            validation_sets=self.validation_sets_build
+        )
+
+        self.assertThat(build_assertion, IsInstance(validation_sets.BuildAssertion))
+
+    def test_post_invalid_sequence_for_build_assertion(self):
+        self.validation_sets_build["sequence"] = 0
+
+        raised = self.assertRaises(
+            errors.StoreValidationSetsError,
+            self.client.post_validation_sets_build_assertion,
+            validation_sets=self.validation_sets_build,
+        )
+
+        self.assertThat(
+            str(raised),
+            Equals(
+                "Issues encountered with validation set: 0 is less than the minimum of 1 at /sequence"
+            ),
+        )
+
+    def _fake_sign(self, build_assertion: validation_sets.BuildAssertion) -> bytes:
+        # Fake sign.
+        assertion_json = build_assertion.marshal()
+        assertion_json[
+            "sign-key-sha3-384"
+        ] = "XSignXKeyXHashXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+        return (json.dumps(assertion_json) + "\n\nSIGNED").encode()
+
+    def test_post_valid_assertion(self):
+        build_assertion = self.client.post_validation_sets_build_assertion(
+            validation_sets=self.validation_sets_build
+        )
+
+        self.client.post_validation_sets(
+            signed_validation_sets=self._fake_sign(build_assertion)
+        )
+
+    def test_post_invalid_assertion(self):
+        build_assertion = self.client.post_validation_sets_build_assertion(
+            validation_sets=self.validation_sets_build
+        )
+
+        build_assertion.authority_id = "invalid"
+
+        raised = self.assertRaises(
+            errors.StoreValidationSetsError,
+            self.client.post_validation_sets,
+            signed_validation_sets=self._fake_sign(build_assertion),
+        )
+
+        self.assertThat(
+            str(raised),
+            Equals(
+                "Issues encountered with validation set: account-id and authority-id must match the requesting user."
+            ),
+        )
+
+    def test_get_validation_sets(self):
+        build_assertion = self.client.post_validation_sets_build_assertion(
+            validation_sets=self.validation_sets_build
+        )
+
+        self.client.post_validation_sets(
+            signed_validation_sets=self._fake_sign(build_assertion)
+        )
+
+        validation_set = self.client.get_validation_sets(
+            name="acme-cert-2020-10", sequence="latest"
+        )
+
+        self.assertThat(validation_set, IsInstance(validation_sets.ValidationSets))
 
 
 class ValidationsTestCase(StoreTestCase):

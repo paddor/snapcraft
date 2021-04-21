@@ -20,9 +20,12 @@ import os
 import re
 import urllib.parse
 import uuid
+from datetime import datetime
+from typing import Any, Dict
 
 import pymacaroons
 from pyramid import response
+from pyramid.config.i18n import I18NConfiguratorMixin
 
 from tests.fake_servers import base
 
@@ -40,6 +43,8 @@ class FakeStoreAPIServer(base.BaseFakeServer):
         self.account_keys = []
         self.registered_names = {}
         self.pushed_snaps = set()
+        self.validation_set_revisions = dict()
+        self.validation_set_assertions = dict()
 
     def configure(self, configurator):
         # POST
@@ -120,6 +125,23 @@ class FakeStoreAPIServer(base.BaseFakeServer):
         )
         configurator.add_view(
             self.snap_binary_metadata, route_name="snap_binary_metadata_post"
+        )
+
+        configurator.add_route(
+            "post_validation_sets_build_assertion",
+            "/api/v2/validation-sets/build-assertion",
+            request_method="POST",
+        )
+        configurator.add_view(
+            self.post_validation_sets_build_assertion,
+            route_name="post_validation_sets_build_assertion",
+        )
+
+        configurator.add_route(
+            "post_validation_sets", "/api/v2/validation-sets", request_method="POST",
+        )
+        configurator.add_view(
+            self.post_validation_sets, route_name="post_validation_sets",
         )
 
         # GET
@@ -1526,3 +1548,80 @@ class FakeStoreAPIServer(base.BaseFakeServer):
             response_code,
             [("Content-Type", content_type)],
         )
+
+    def _get_validation_sets_revision(self, name: str) -> str:
+        if name not in self.validation_set_revisions:
+            self.validation_set_revisions[name] = 0
+        else:
+            self.validation_set_revisions[name] += 1
+
+        return str(self.validation_set_revisions[name])
+
+    def post_validation_sets_build_assertion(self, request):
+        if request.json_body["sequence"] > 0:
+            payload = request.json_body
+            payload["sequence"] = str(payload["sequence"])
+            # Get a revision for this assertion.
+            payload["revision"] = self._get_validation_sets_revision(payload["name"])
+            # Convert revisions for snaps into strings and add ids if not there.
+            for snap in payload["snaps"]:
+                if "revision" in snap:
+                    snap["revision"] = str(snap["revision"])
+                if "id" not in snap:
+                    snap["id"] = "snap-id" + snap["name"]
+            # Send and authority-id for this assertion.
+            payload["authority-id"] = payload["account-id"]
+            # And add all the other required fields for this response.
+            payload["type"] = "validation-set"
+            payload["timestamp"] = datetime.strftime(
+                datetime.now(), "%Y-%m-%dT%H:%M:%S.%fZ"
+            )
+            payload["series"] = "16"
+            response_code = 200
+        else:
+            payload = {
+                "error-list": [
+                    {
+                        "message": "0 is less than the minimum of 1 at /sequence",
+                        "code": "invalid-request",
+                    }
+                ]
+            }
+            response_code = 400
+
+        return response.Response(
+            json.dumps(payload).encode(),
+            response_code,
+            [("Content-Type", "application/json")],
+        )
+
+    def _save_validation_sets_assertion(self, assertion: Dict[str, Any]) -> None:
+        self.validation_set_assertions[assertion["name"]] = assertion
+
+    def post_validation_sets(self, request):
+        assertion_data = json.loads(request.body.decode().splitlines()[0])
+
+        if assertion_data["authority-id"] == assertion_data["account-id"]:
+            response_code = 200
+            # API has a response with the assertion as json, but we don't use it.
+            payload = assertion_data
+            self._save_validation_sets_assertion(assertion_data)
+        else:
+            payload = {
+                "error-list": [
+                    {
+                        "message": "account-id and authority-id must match the requesting user.",
+                        "code": "invalid-request",
+                    }
+                ]
+            }
+            response_code = 400
+
+        return response.Response(
+            json.dumps(payload).encode(),
+            response_code,
+            [("Content-Type", "application/json")],
+        )
+
+    def get_validation_sets(self, request):
+        if request.matc

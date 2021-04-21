@@ -26,7 +26,7 @@ from simplejson.scanner import JSONDecodeError
 from . import _metadata, constants, errors, http_clients
 from ._requests import Requests
 from ._status_tracker import StatusTracker
-from .v2 import channel_map, releases, whoami
+from .v2 import channel_map, releases, validation_sets, whoami
 
 
 logger = logging.getLogger(__name__)
@@ -367,3 +367,48 @@ class DashboardAPI(Requests):
             raise errors.GeneralStoreError(message="whoami failed.", response=response)
 
         return whoami.WhoAmI.unmarshal(response.json())
+
+    def post_validation_sets_build_assertion(
+        self, validation_sets_data: Dict[str, Any]
+    ) -> validation_sets.BuildAssertion:
+        url = "/api/v2/validation-sets/build-assertion"
+        response = self.post(
+            url,
+            headers={"Accept": "application/json", "Content-Type": "application/json",},
+            json=validation_sets_data,
+        )
+
+        if not response.ok:
+            raise errors.StoreValidationSetsError(response)
+
+        return validation_sets.BuildAssertion.unmarshal(response.json())
+
+    def post_validation_sets(self, signed_validation_sets: bytes) -> None:
+        url = "/api/v2/validation-sets"
+        response = self.post(
+            url,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x.ubuntu.assertion",
+            },
+            data=signed_validation_sets,
+        )
+
+        if not response.ok:
+            raise errors.StoreValidationSetsError(response)
+
+    def get_validation_sets(
+        self, *, name: str, sequence: str
+    ) -> validation_sets.ValidationSets:
+        url = "/api/v2/validation-sets"
+        if name is not None:
+            url += "/" + name
+
+        response = self.get(
+            url, headers={"Accept": "application/json",}, params={"sequence": sequence},
+        )
+
+        if not response.ok:
+            raise errors.StoreValidationSetsError(response)
+
+        return validation_sets.ValidationSets.unmarshal(response.json())

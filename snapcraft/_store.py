@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from snapcraft.storeapi._status_tracker import StatusTracker
     from snapcraft.storeapi.v2.channel_map import ChannelMap
     from snapcraft.storeapi.v2.releases import Releases
+    from snapcraft.storeapi.v2.validation_sets import BuildAssertion, ValidationSets
 
 
 logger = logging.getLogger(__name__)
@@ -328,6 +329,24 @@ class StoreClientCLI(storeapi.StoreClient):
     @_login_wrapper
     def get_snap_channel_map(self, *, snap_name: str) -> "ChannelMap":
         return super().get_snap_channel_map(snap_name=snap_name)
+
+    @_login_wrapper
+    def post_validation_sets_build_assertion(
+        self, *, validation_sets: Dict[str, Any]
+    ) -> "BuildAssertion":
+        return super().post_validation_sets_build_assertion(
+            validation_sets=validation_sets
+        )
+
+    @_login_wrapper
+    def post_validation_sets(self, *, signed_validation_sets: Dict[str, Any]) -> None:
+        super().post_validation_sets(signed_validation_sets=signed_validation_sets)
+
+    @_login_wrapper
+    def get_validation_sets(
+        self, *, name: str, sequence: str = "latest"
+    ) -> "ValidationSets":
+        return super().get_validation_sets(name=name, sequence=sequence)
 
     @_login_wrapper
     def get_account_information(self) -> Dict[str, Any]:
